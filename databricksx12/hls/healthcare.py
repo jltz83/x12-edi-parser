@@ -10,8 +10,7 @@ class HealthcareManager(EDI):
             "221": Remittance, # Remittance "835"
             "222": Claim837p,
             "223": Claim837i,
-            "224": None #Dental ,
-            "225": None #Dental 
+            "224": None #Dental
     }
 
     #
