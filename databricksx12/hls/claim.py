@@ -314,9 +314,10 @@ class MedicalClaim(EDI):
             dmg = self._first(self.patient_loop, "DMG"),
             pat = self._first(self.patient_loop, "PAT"),
             sbr = self._first(self.patient_loop, "SBR"),
-            ref_ea = self._first([x for x in l if x.element(1) == "EA"], "REF"),
-            ref_sy = self._first([x for x in l if x.element(1) == "SY"], "REF")
+            ref_ea = self._first([x for x in self.patient_loop if x.element(1) == "EA"], "REF"),
+            ref_sy = self._first([x for x in self.patient_loop if x.element(1) == "SY"], "REF")    
         )
+
     
     def _populate_claim_loop(self):
         return ClaimIdentity(clm = self._first(self.claim_loop, "CLM"),
