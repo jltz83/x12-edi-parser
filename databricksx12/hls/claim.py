@@ -440,6 +440,19 @@ class Claim837i(MedicalClaim):
                     lin = self.segments_by_name("LIN", data=s)
                 ),self.claim_lines()))
 
+    def _populate_subscriber_loop(self):
+        l = self.subscriber_loop[0:min(filter(lambda x: x!= -1, [self.index_of_segment(self.subscriber_loop, "CLM"), len(self.subscriber_loop)]))] #subset the subscriber loop before the CLM segment
+        return PatientIdentity(
+            nm1 = self._first(l, "NM1"),
+            n3 = self._first(l, "N3"),
+            n4 = self._first(l, "N4"),
+            dmg = self._first(l, "DMG"),            
+            pat = self._first(l, "PAT"),
+            sbr = self._first(l, "SBR"),
+            ref_ea = self._first([x for x in l if x.element(1) == "EA"], "REF"),
+            ref_sy = self._first([x for x in l if x.element(1) == "SY"], "REF")
+        )
+
     
 class Claim837p(MedicalClaim):
 
