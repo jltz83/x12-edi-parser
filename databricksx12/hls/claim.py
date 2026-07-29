@@ -300,7 +300,7 @@ class MedicalClaim(EDI):
             dmg = self._first(l, "DMG"),            
             pat = self._first(l, "PAT"),
             sbr = self._first(l, "SBR"),
-            ref_ea = self._first([x for x in self.claim_loop if x._name = "REF" and x.element(1) == "EA"], "REF"),
+            ref_ea = self._first([x for x in self.claim_loop if x._name == "REF" and x.element(1) == "EA"], "REF"),
             ref_sy = self._first([x for x in l if x.element(1) == "SY"], "REF")
         )
     
@@ -314,7 +314,7 @@ class MedicalClaim(EDI):
             dmg = self._first(self.patient_loop, "DMG"),
             pat = self._first(self.patient_loop, "PAT"),
             sbr = self._first(self.patient_loop, "SBR"),
-            ref_ea = self._first([x for x in self.claim_loop if x._name = "REF" and x.element(1) == "EA"], "REF"),
+            ref_ea = self._first([x for x in self.claim_loop if x._name == "REF" and x.element(1) == "EA"], "REF"),
             ref_sy = self._first([x for x in self.patient_loop if x.element(1) == "SY"], "REF")    
         )
 
