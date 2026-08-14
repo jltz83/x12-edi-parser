@@ -1,22 +1,67 @@
 JSON_Field_Path,Loop_Name,Segment_Name,Element_Number,Element_Description,Notes
-enrollment_member.enrollment_member.member_id_code,2000,NM1,9,Identification Code,Member ID
-enrollment_member.enrollment_member.member_identifier_type,2000,NM1,8,Identification Code Qualifier,See IDENTIFIER_TYPE_MAPPING
-enrollment_member.enrollment_member.member_first_name,2000,NM1,4,Name First,First name
-enrollment_member.enrollment_member.member_last_name,2000,NM1,3,Name Last,Last name
-enrollment_member.enrollment_member.member_dob,2000,DMG,2,Date Time Period,Date of birth
-enrollment_member.enrollment_member.member_gender,2000,DMG,3,Gender Code,M=Male, F=Female
-enrollment_member.enrollment_member.contact_phone_number.home_phone,2000,PER,4,Communication Number,Home phone number
-enrollment_member.enrollment_member.contact_phone_number.work_phone,2000,PER,6,Communication Number,Work phone number
-enrollment_member.enrollment_member.address.street_name,2000,N3,1,Address Information,Street address
-enrollment_member.enrollment_member.address.apartment_name,2000,N3,2,Address Information,Apartment/suite
-enrollment_member.enrollment_member.address.city_name,2000,N4,1,City Name,City
-enrollment_member.enrollment_member.address.state_code,2000,N4,2,State or Province Code,State code
-enrollment_member.enrollment_member.address.postal_code,2000,N4,3,Postal Code,ZIP code
-enrollment_member.enrollment_member.Maintenance.benefit_status,2000,INS,1,Benefit Status Code,Y=Active, N=Inactive
-enrollment_member.enrollment_member.Maintenance.maintenance_type_code,2000,INS,3,Maintenance Type Code,See X12 834 spec
-enrollment_member.enrollment_member.Maintenance.maintenance_reason_code,2000,INS,4,Maintenance Reason Code,See X12 834 spec
-enrollment_member.enrollment_member.Maintenance.coverage_start_date,2000,DTP,3,Date Time Period,Coverage start date
-health_plan.coverage_type_code,2300,HD,3,Maintenance Type Code,HLT=Health, DEN=Dental, VIS=Vision
-health_plan.coverage_desc,2300,HD,3,Maintenance Type Code,See COVERAGE_DESC_MAPPING
-health_plan.effective_date,2300,DTP,3,Date Time Period,Effective date
-health_plan.end_date,2300,DTP,4,Date Time Period,End date (if present) 
+enrollment_member.transaction_header.bgn_purpose_code,Header,BGN,1,Transaction Set Purpose Code,00=Original
+enrollment_member.transaction_header.bgn_reference_id,Header,BGN,2,Reference Identification,File / batch reference
+enrollment_member.transaction_header.bgn_date,Header,BGN,3,Date,BGN date
+enrollment_member.transaction_header.bgn_time,Header,BGN,4,Time,BGN time
+enrollment_member.transaction_header.bgn_action_code,Header,BGN,8,Action Code,2=Change (typical)
+enrollment_member.transaction_header.qty_qualifier,Header,QTY,1,Quantity Qualifier,TO=Total
+enrollment_member.transaction_header.qty_value,Header,QTY,2,Quantity,Declared member count
+enrollment_member.transaction_header.sponsors[].entity_identifier_code,1000A,N1,1,Entity Identifier Code,P5=Plan Sponsor
+enrollment_member.transaction_header.sponsors[].name,1000A,N1,2,Name,Sponsor name
+enrollment_member.transaction_header.sponsors[].id_code_qualifier,1000A,N1,3,Identification Code Qualifier,FI/94/etc
+enrollment_member.transaction_header.sponsors[].id_code,1000A,N1,4,Identification Code,Sponsor tax/plan ID
+enrollment_member.transaction_header.insurers[].entity_identifier_code,1000B,N1,1,Entity Identifier Code,IN=Insurer
+enrollment_member.transaction_header.insurers[].name,1000B,N1,2,Name,Insurer name
+enrollment_member.transaction_header.insurers[].id_code_qualifier,1000B,N1,3,Identification Code Qualifier,
+enrollment_member.transaction_header.insurers[].id_code,1000B,N1,4,Identification Code,Insurer ID
+enrollment_member.member_id_code,2000,NM1,9,Identification Code,Member ID (IL/74 preferred)
+enrollment_member.member_identifier_qualifier,2000,NM1,8,Identification Code Qualifier,Raw qualifier
+enrollment_member.member_identifier_type,2000,NM1,8,Identification Code Qualifier,See IDENTIFIER_TYPE_MAPPING
+enrollment_member.member_nm1_entity_code,2000,NM1,1,Entity Identifier Code,IL/74/etc
+enrollment_member.member_first_name,2000,NM1,4,Name First,First name
+enrollment_member.member_last_name,2000,NM1,3,Name Last,Last name
+enrollment_member.member_middle_name,2000,NM1,5,Name Middle,Middle name / initial
+enrollment_member.member_dob,2000,DMG,2,Date Time Period,Date of birth
+enrollment_member.member_gender,2000,DMG,3,Gender Code,M/F/U
+enrollment_member.contact_phone_number.home_phone,2000,PER,4,Communication Number,HP or TE
+enrollment_member.contact_phone_number.work_phone,2000,PER,6,Communication Number,WP
+enrollment_member.contact_phone_number.email,2000,PER,,Communication Number,EM qualifier
+enrollment_member.address.street_name,2000,N3,1,Address Information,Street address
+enrollment_member.address.apartment_name,2000,N3,2,Address Information,Apartment/suite
+enrollment_member.address.city_name,2000,N4,1,City Name,City
+enrollment_member.address.state_code,2000,N4,2,State or Province Code,State
+enrollment_member.address.postal_code,2000,N4,3,Postal Code,ZIP
+enrollment_member.address.country_code,2000,N4,4,Country Code,Optional
+enrollment_member.address.location_qualifier,2000,N4,5,Location Qualifier,e.g. CY=County
+enrollment_member.address.location_identifier,2000,N4,6,Location Identifier,County name/code
+enrollment_member.references[].ref_qualifier,2000,REF,1,Reference Identification Qualifier,0F/1L/17/23/ZZ/...
+enrollment_member.references[].ref_value,2000,REF,2,Reference Identification,Reference value
+enrollment_member.member_dates[].dtp_qualifier,2000,DTP,1,Date/Time Qualifier,303/356/...
+enrollment_member.member_dates[].dtp_date,2000,DTP,3,Date Time Period,Date value
+enrollment_member.Maintenance.benefit_status,2000,INS,1,Yes/No Condition or Response Code,Y/N
+enrollment_member.Maintenance.individual_relationship_code,2000,INS,2,Individual Relationship Code,18=Self
+enrollment_member.Maintenance.individual_relationship_desc,2000,INS,2,Individual Relationship Code,Decoded
+enrollment_member.Maintenance.maintenance_type_code,2000,INS,3,Maintenance Type Code,021=Add 001=Change 024=Term
+enrollment_member.Maintenance.maintenance_type_desc,2000,INS,3,Maintenance Type Code,Decoded
+enrollment_member.Maintenance.maintenance_reason_code,2000,INS,4,Maintenance Reason Code,
+enrollment_member.Maintenance.benefit_status_code,2000,INS,5,Benefit Status Code,A=Active
+enrollment_member.Maintenance.employment_status_code,2000,INS,8,Employment Status Code,FT/AC/...
+enrollment_member.Maintenance.coverage_start_date,2000,DTP,3,Date Time Period,Prefers 356 then 303
+enrollment_member.Maintenance.maintenance_effective_date,2000,DTP,3,Date Time Period,DTP*303
+enrollment_member.Maintenance.eligibility_begin_date,2000,DTP,3,Date Time Period,DTP*356
+enrollment_member.related_parties[].entity_identifier_code,2000,NM1,1,Entity Identifier Code,70/QD/Y2/...
+enrollment_member.related_parties[].last_name_or_org,2000,NM1,3,Name Last or Organization Name,
+enrollment_member.related_parties[].first_name,2000,NM1,4,Name First,
+enrollment_member.related_parties[].dob,2000,DMG,2,Date Time Period,If DMG follows NM1
+enrollment_member.health_coverage_elections[].maintenance_type_code,2300,HD,1,Maintenance Type Code,HD maintenance
+enrollment_member.health_coverage_elections[].coverage_type_code,2300,HD,3,Insurance Line Code,HLT/DEN/VIS
+enrollment_member.health_coverage_elections[].coverage_desc,2300,HD,3,Insurance Line Code,Decoded
+enrollment_member.health_coverage_elections[].coverage_level_code,2300,HD,5,Coverage Level Code,IND/FAM
+enrollment_member.health_coverage_elections[].coverage_start_dt,2300,DTP,3,Date Time Period,DTP*348
+enrollment_member.health_coverage_elections[].coverage_end_dt,2300,DTP,3,Date Time Period,DTP*349
+enrollment_member.health_coverage_elections[].references[].ref_value,2300,REF,2,Reference Identification,e.g. X9 policy ID
+enrollment_member.health_coverage_elections[].cob_payer_responsible_cd,2320,COB,1,Payer Responsibility Sequence Number Code,
+enrollment_member.health_coverage_elections[].cob_policy_number,2320,COB,2,Reference Identification,
+enrollment_member.reporting_categories[].name,2700,N1,2,Name,LS/LE 2700 reporting
+enrollment_member.reporting_categories[].references[].ref_value,2700,REF,2,Reference Identification,Category value
+enrollment_member.reporting_categories[].dates[].dtp_date,2700,DTP,3,Date Time Period,Category date

@@ -8,13 +8,13 @@ with open(path.join(this_directory, "README.md"), encoding="utf-8") as f:
     LONG_DESCRIPTION = f.read()
 
 setup(
-    name="databricksx12",
-    version="0.0.9",
-    # python_requires='>=3.9.*',
-    python_requires='>=3.9',
-    author="Aaron Zavora, Raven Mukherjee",
-    author_email="aaron.zavora@databricks.com",
-    description= "Parser for handling x12 EDI transactions in Spark",
+ name="databricksx12",
+ version="0.0.10a1",
+ # python_requires='>=3.9.*',
+ python_requires='>=3.9',
+ author="Aaron Zavora, Raven Mukherjee",
+ author_email="aaron.zavora@databricks.com",
+ description= "Parser for handling x12 EDI transactions in Spark",
     long_description=LONG_DESCRIPTION,
     long_description_content_type="text/markdown",
     url="https://github.com/databricks-industry-solutions/x12-edi-parser",

@@ -68,9 +68,13 @@ class ClaimBuilder(EDI):
     def build_enrollment(self, pay_segment, idx):
         ins_next_idx = self.index_of_segment(self.data, "INS", idx+1)
         end_idx = ins_next_idx if ins_next_idx > 0 else self.index_of_segment(self.data, "SE")
-        
+        # Header (BGN/QTY/sponsor N1) lives before the first INS in the transaction
+        first_ins = self.index_of_segment(self.data, "INS")
+        header_end = first_ins if first_ins > 0 else 0
+
         return self.trnx_cls(
-            member_detail_loop = self.data[idx:end_idx]
+            member_detail_loop=self.data[idx:end_idx],
+            transaction_header_loop=self.data[0:header_end],
         )
 
     #
@@ -229,13 +233,20 @@ class ClaimBuilder(EDI):
             # Optimized: Pre-build index of all INS positions, then slice between them
             ins_indices = [i for i, seg in self.segments_by_name_index("INS")]
             se_idx = self.index_of_segment(self.data, "SE")
-            
+
+            # Header (BGN/QTY/sponsor-payer N1) is everything before the first INS
+            header_end = ins_indices[0] if ins_indices else 0
+            transaction_header_loop = self.data[0:header_end]
+
             # Add SE index as the end boundary
             ins_indices.append(se_idx if se_idx > 0 else len(self.data))
-            
+
             # Build enrollments by slicing between consecutive INS positions
             return [
-                self.trnx_cls(member_detail_loop=self.data[ins_indices[i]:ins_indices[i+1]])
+                self.trnx_cls(
+                    member_detail_loop=self.data[ins_indices[i]:ins_indices[i + 1]],
+                    transaction_header_loop=transaction_header_loop,
+                )
                 for i in range(len(ins_indices) - 1)
             ]
 
