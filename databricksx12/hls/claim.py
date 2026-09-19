@@ -183,8 +183,39 @@ class ClaimBuilder(EDI):
     def build(self):
         if self.trnx_cls.NAME in ['837I', '837P']:
             return list(self._build_837_iter())
-            
+
         elif self.trnx_cls.NAME == '835':
+            return list(self._build_835_iter())
+
+        elif self.trnx_cls.NAME == '834':
+            return self._build_834()
+
+        return []
+
+    #
+    # Lazy claim construction.
+    #
+    # build() materialises every claim in the transaction before the caller sees
+    # any of them. Each Remittance/MedicalClaim populates its identity objects
+    # at construction (~20KB for an 835 claim), so a transaction carrying N
+    # claims costs N x that all at once -- measured at 182MB for a single
+    # transaction holding 8,941 claims, versus 10MB for a file with the same
+    # claim count spread over 1,153 transactions.
+    #
+    # Streaming consumers (mapInArrow emitters) should prefer build_iter(),
+    # which holds one claim at a time. build() is unchanged for callers that
+    # need a list.
+    #
+    def build_iter(self):
+        if self.trnx_cls.NAME in ['837I', '837P']:
+            return self._build_837_iter()
+        elif self.trnx_cls.NAME == '835':
+            return self._build_835_iter()
+        return iter(self.build())
+
+    def _build_835_iter(self):
+        """Generator over the 835 claims in this transaction."""
+        if True:
             # Pre-build indices for all segment types needed
             clp_indices = [i for i, seg in self.segments_by_name_index("CLP")]
             n1_indices = [i for i, seg in self.segments_by_name_index("N1")]
@@ -210,7 +241,6 @@ class ClaimBuilder(EDI):
             payee_loop = self.data[n1_second:lx_first]
             trx_summary_loop = self.data[max(0, lx_last, clp_last, svc_last):]
 
-            remittances = []
             for idx_pos, idx in enumerate(clp_indices):
                 # Next CLP index
                 next_clp = clp_indices[idx_pos + 1] if idx_pos + 1 < len(clp_indices) else -1
@@ -248,19 +278,17 @@ class ClaimBuilder(EDI):
                 clp_pos = bisect.bisect_left(clp_indices, hdr_start)
                 hdr_end = clp_indices[clp_pos] if clp_pos < len(clp_indices) else idx
 
-                remittances.append(
-                    self.trnx_cls(
-                        trx_header_loop=trx_header_loop,
-                        payer_loop=payer_loop,
-                        payee_loop=payee_loop,
-                        clm_loop=self.data[idx:clm_end],
-                        trx_summary_loop=trx_summary_loop,
-                        header_number_loop=self.data[hdr_start:hdr_end]
-                    )
+                yield self.trnx_cls(
+                    trx_header_loop=trx_header_loop,
+                    payer_loop=payer_loop,
+                    payee_loop=payee_loop,
+                    clm_loop=self.data[idx:clm_end],
+                    trx_summary_loop=trx_summary_loop,
+                    header_number_loop=self.data[hdr_start:hdr_end]
                 )
-            return remittances
-            
-        elif self.trnx_cls.NAME == '834':
+
+    def _build_834(self):
+        if True:
             # Optimized: Pre-build index of all INS positions, then slice between them
             ins_indices = [i for i, seg in self.segments_by_name_index("INS")]
             se_idx = self.index_of_segment(self.data, "SE")

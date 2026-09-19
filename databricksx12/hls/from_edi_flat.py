@@ -109,12 +109,21 @@ def get_flat_schema() -> StructType:
 
 def _claims_for_transaction(trnx):
     """
-    All claims in one transaction, built in a single pass.
+    Claims in one transaction, built lazily in a single pass.
 
-    This is the entire performance story. ClaimBuilder.build() walks the segment
-    list once and returns every claim; calling it per claim instead -- which is
-    what HealthcareManager.flatten_to_json does -- is O(claims x segments) and
-    runs 400x slower at 400 claims per transaction.
+    Two separate things matter here.
+
+    build() walks the segment list once and produces every claim; calling it per
+    claim instead -- which is what HealthcareManager.flatten_to_json does -- is
+    O(claims x segments) and runs 400x slower at 400 claims per transaction.
+
+    build_iter() additionally yields claims one at a time rather than
+    materialising the list. Each Remittance/MedicalClaim populates its identity
+    objects at construction (~20KB for an 835 claim), so a transaction holding
+    N claims otherwise costs N x that simultaneously: 182MB measured on a real
+    single-transaction file with 8,941 claims, against 10MB for a file with MORE
+    claims spread across 1,153 transactions. Lazy construction made that
+    transaction 50x cheaper with byte-identical output.
     """
     transaction_type = getattr(trnx, "transaction_type", None)
     trnx_cls = HealthcareManager.mapping.get(transaction_type)
@@ -127,7 +136,7 @@ def _claims_for_transaction(trnx):
     else:
         segments = trnx.data
 
-    claims = ClaimBuilder(trnx_cls, segments, trnx.format_cls).build()
+    claims = ClaimBuilder(trnx_cls, segments, trnx.format_cls).build_iter()
 
     # Position of each claim's anchor segment in the UNFILTERED transaction, so
     # claim_index means the same thing it did in LocalHealthcareManager. One
