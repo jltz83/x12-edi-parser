@@ -48,8 +48,18 @@ SAMPLE_837 = "sampledata/837/CC_837I_EDI.txt"
 MAX_DOUBLING_RATIO = 2.6
 
 
-def _synth_835(n_claims):
-    """One ST..SE transaction containing n_claims LX+CLP units."""
+# LX (loop 2000) is OPTIONAL in the 835 guide and payers differ. Both shapes
+# MUST be tested: a fix that anchors header_number_loop to the preceding LX
+# looks correct under LX_PER_CLAIM and is still fully quadratic under
+# SINGLE_LX, because there the preceding LX is always the first LX.
+LX_PER_CLAIM = True     # one LX per claim
+SINGLE_LX = False       # one LX for the whole transaction, many CLPs beneath
+
+SHAPES = [("one LX per CLP", LX_PER_CLAIM), ("one LX, many CLP", SINGLE_LX)]
+
+
+def _synth_835(n_claims, lx_per_claim=LX_PER_CLAIM):
+    """One ST..SE transaction containing n_claims claims."""
     src = re.sub(r"[\r\n]+", "", open(SAMPLE_835).read())
     segs = [s for s in src.split("~") if s.strip()]
     names = [s.split("*", 1)[0] for s in segs]
@@ -58,9 +68,11 @@ def _synth_835(n_claims):
     plb_or_se = next(i for i, n in enumerate(names) if n in ("PLB", "SE"))
 
     head = segs[: lx_positions[0]]
-    unit = segs[lx_positions[0] : lx_positions[1]]
+    unit = segs[lx_positions[0] : lx_positions[1]]      # LX + CLP + lines
     tail = segs[plb_or_se:]
-    return "~".join(head + unit * n_claims + tail) + "~"
+
+    body = unit * n_claims if lx_per_claim else [unit[0]] + unit[1:] * n_claims
+    return "~".join(head + body + tail) + "~"
 
 
 def _transaction(text):
@@ -68,9 +80,9 @@ def _transaction(text):
     return list(edi.functional_segments())[0].transaction_segments()[0]
 
 
-def _build(n_claims, repeats=3):
+def _build(n_claims, lx_per_claim=LX_PER_CLAIM, repeats=3):
     """Returns (best_seconds, remittances) for an n_claims transaction."""
-    trnx = _transaction(_synth_835(n_claims))
+    trnx = _transaction(_synth_835(n_claims, lx_per_claim))
     best, out = float("inf"), None
     for _ in range(repeats):
         start = time.perf_counter()
@@ -81,48 +93,53 @@ def _build(n_claims, repeats=3):
 
 def test_build_scales_linearly():
     sizes = [200, 400, 800, 1600]
-    timings = {}
 
-    for n in sizes:
-        seconds, claims = _build(n)
-        assert len(claims) == n, f"expected {n} claims, got {len(claims)}"
-        timings[n] = seconds
+    for label, shape in SHAPES:
+        timings = {}
+        for n in sizes:
+            seconds, claims = _build(n, shape)
+            assert len(claims) == n, f"{label}: expected {n} claims, got {len(claims)}"
+            timings[n] = seconds
 
-    print(f"\n{'claims':>8} {'seconds':>10} {'ms/claim':>10} {'vs prev':>9}")
-    previous = None
-    for n in sizes:
-        seconds = timings[n]
-        ratio = seconds / previous if previous else None
-        print(
-            f"{n:>8} {seconds:>9.4f}s {seconds * 1000 / n:>9.4f} "
-            f"{(f'{ratio:.2f}x' if ratio else '-'):>9}"
-        )
-        if ratio is not None:
-            assert ratio < MAX_DOUBLING_RATIO, (
-                f"build() took {ratio:.2f}x longer for 2x the claims at n={n} "
-                f"(limit {MAX_DOUBLING_RATIO}x). The 835 branch has regressed "
-                f"to superlinear -- check header_number_loop."
+        print(f"\n{label}")
+        print(f"{'claims':>8} {'seconds':>10} {'ms/claim':>10} {'vs prev':>9}")
+        previous = None
+        for n in sizes:
+            seconds = timings[n]
+            ratio = seconds / previous if previous else None
+            print(
+                f"{n:>8} {seconds:>9.4f}s {seconds * 1000 / n:>9.4f} "
+                f"{(f'{ratio:.2f}x' if ratio else '-'):>9}"
             )
-        previous = seconds
+            if ratio is not None:
+                assert ratio < MAX_DOUBLING_RATIO, (
+                    f"[{label}] build() took {ratio:.2f}x longer for 2x the "
+                    f"claims at n={n} (limit {MAX_DOUBLING_RATIO}x). The 835 "
+                    f"branch is superlinear for this LX layout -- check BOTH "
+                    f"bounds of header_number_loop, not just the start."
+                )
+            previous = seconds
 
 
 def test_output_size_scales_linearly():
-    """JSON bytes per claim must stay flat as claim count grows."""
-    per_claim = {}
-    for n in (100, 400, 1600):
-        _, claims = _build(n, repeats=1)
-        total = len(json.dumps([c.to_json() for c in claims]))
-        per_claim[n] = total / n
+    """JSON bytes per claim must stay flat as claim count grows, both shapes."""
+    for label, shape in SHAPES:
+        per_claim = {}
+        for n in (100, 400, 1600):
+            _, claims = _build(n, shape, repeats=1)
+            per_claim[n] = len(json.dumps([c.to_json() for c in claims])) / n
 
-    print(f"\n{'claims':>8} {'bytes/claim':>13}")
-    for n, size in per_claim.items():
-        print(f"{n:>8} {size:>13,.0f}")
+        print(f"\n{label}")
+        print(f"{'claims':>8} {'bytes/claim':>13}")
+        for n, size in per_claim.items():
+            print(f"{n:>8} {size:>13,.0f}")
 
-    growth = per_claim[1600] / per_claim[100]
-    assert growth < 1.5, (
-        f"bytes per claim grew {growth:.1f}x between 100 and 1600 claims. "
-        f"header_number_loop is leaking predecessor segments into to_json()."
-    )
+        growth = per_claim[1600] / per_claim[100]
+        assert growth < 1.5, (
+            f"[{label}] bytes per claim grew {growth:.1f}x between 100 and "
+            f"1600 claims. header_number_loop is leaking predecessor segments "
+            f"into to_json()."
+        )
 
 
 def test_claim_data_unchanged_except_provenance():

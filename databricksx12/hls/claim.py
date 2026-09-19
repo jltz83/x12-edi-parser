@@ -226,18 +226,27 @@ class ClaimBuilder(EDI):
                 # Calculate clm_loop end
                 clm_end = min(filter(lambda x: x > 0, [next_lx, next_clp, next_se, data_len]))
 
-                # Loop 2000 header governing THIS claim: from the nearest
-                # PRECEDING LX, not from the transaction's first LX.
+                # Loop 2000 header governing THIS claim: the segments from
+                # the nearest preceding LX up to the first CLP beneath it.
                 #
-                # The previous form, self.data[lx_first:idx], grew by one claim
-                # for every CLP -- claim N received a slice containing claims
-                # 1..N-1. That made build() O(claims^2) in both time and output
-                # size (Remittance.to_json serialises this loop via
-                # _extract_segments, so every claim's JSON embedded all of its
-                # predecessors), and made _first(header_number_loop, "TS3")
-                # return the transaction's FIRST TS3 for every claim rather than
-                # the claim's own.
+                # Both bounds matter. The original form, self.data[lx_first:idx],
+                # grew by one claim per CLP -- claim N received a slice holding
+                # claims 1..N-1 -- making build() O(claims^2) in time AND in
+                # output size, since Remittance.to_json serialises this loop
+                # through _extract_segments. It also made
+                # _first(header_number_loop, "TS3") return the transaction's
+                # first TS3 for every claim instead of the claim's own.
+                #
+                # Anchoring the START alone is not sufficient: LX is optional
+                # and many payers emit ONE LX for a transaction carrying
+                # thousands of CLPs, in which case the preceding LX is always
+                # the first LX and the slice grows exactly as before. The END
+                # must be the first CLP after that LX, which makes the header a
+                # fixed-size loop-2000 prefix (LX, TS3, TS2) regardless of how
+                # many claims follow it.
                 hdr_start = lx_indices[lx_pos - 1] if lx_pos > 0 else lx_first
+                clp_pos = bisect.bisect_left(clp_indices, hdr_start)
+                hdr_end = clp_indices[clp_pos] if clp_pos < len(clp_indices) else idx
 
                 remittances.append(
                     self.trnx_cls(
@@ -246,7 +255,7 @@ class ClaimBuilder(EDI):
                         payee_loop=payee_loop,
                         clm_loop=self.data[idx:clm_end],
                         trx_summary_loop=trx_summary_loop,
-                        header_number_loop=self.data[hdr_start:idx]
+                        header_number_loop=self.data[hdr_start:hdr_end]
                     )
                 )
             return remittances
