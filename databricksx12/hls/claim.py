@@ -185,46 +185,68 @@ class ClaimBuilder(EDI):
             return list(self._build_837_iter())
             
         elif self.trnx_cls.NAME == '835':
-            # Optimized: Pre-build indices for all segment types needed
+            # Pre-build indices for all segment types needed
             clp_indices = [i for i, seg in self.segments_by_name_index("CLP")]
             n1_indices = [i for i, seg in self.segments_by_name_index("N1")]
             lx_indices = [i for i, seg in self.segments_by_name_index("LX")]
             svc_indices = [i for i, seg in self.segments_by_name_index("SVC")]
             se_indices = [i for i, seg in self.segments_by_name_index("SE")]
-            
+
+            data_len = len(self.data)
+
             # Pre-compute common values used by all remittances
-            n1_first = n1_indices[0] if n1_indices else len(self.data)
-            n1_second = n1_indices[1] if len(n1_indices) > 1 else len(self.data)
-            lx_first = lx_indices[0] if lx_indices else len(self.data)
+            n1_first = n1_indices[0] if n1_indices else data_len
+            n1_second = n1_indices[1] if len(n1_indices) > 1 else data_len
+            lx_first = lx_indices[0] if lx_indices else data_len
             lx_last = lx_indices[-1] if lx_indices else 0
             clp_last = clp_indices[-1] if clp_indices else 0
             svc_last = svc_indices[-1] if svc_indices else 0
-            
-            # Pre-build lookup for "next CLP after current index"
-            clp_indices_set = set(clp_indices)
-            
+
+            # These four slices do not depend on the claim index, so build them
+            # once instead of re-slicing per CLP. The lists are shared by every
+            # remittance in the transaction; nothing downstream mutates them.
+            trx_header_loop = self.data[0:n1_first]
+            payer_loop = self.data[n1_first:n1_second]
+            payee_loop = self.data[n1_second:lx_first]
+            trx_summary_loop = self.data[max(0, lx_last, clp_last, svc_last):]
+
             remittances = []
             for idx_pos, idx in enumerate(clp_indices):
-                # Find next CLP index
+                # Next CLP index
                 next_clp = clp_indices[idx_pos + 1] if idx_pos + 1 < len(clp_indices) else -1
-                
-                # Find next LX after current idx
-                next_lx = next((lx for lx in lx_indices if lx > idx), -1)
-                
-                # Find next SE after current idx
-                next_se = next((se for se in se_indices if se > idx), -1)
-                
+
+                # Next LX / SE after idx. bisect instead of a linear scan of the
+                # index list: both lists are already sorted ascending.
+                lx_pos = bisect.bisect_right(lx_indices, idx)
+                next_lx = lx_indices[lx_pos] if lx_pos < len(lx_indices) else -1
+
+                se_pos = bisect.bisect_right(se_indices, idx)
+                next_se = se_indices[se_pos] if se_pos < len(se_indices) else -1
+
                 # Calculate clm_loop end
-                clm_end = min(filter(lambda x: x > 0, [next_lx, next_clp, next_se, len(self.data)]))
-                
+                clm_end = min(filter(lambda x: x > 0, [next_lx, next_clp, next_se, data_len]))
+
+                # Loop 2000 header governing THIS claim: from the nearest
+                # PRECEDING LX, not from the transaction's first LX.
+                #
+                # The previous form, self.data[lx_first:idx], grew by one claim
+                # for every CLP -- claim N received a slice containing claims
+                # 1..N-1. That made build() O(claims^2) in both time and output
+                # size (Remittance.to_json serialises this loop via
+                # _extract_segments, so every claim's JSON embedded all of its
+                # predecessors), and made _first(header_number_loop, "TS3")
+                # return the transaction's FIRST TS3 for every claim rather than
+                # the claim's own.
+                hdr_start = lx_indices[lx_pos - 1] if lx_pos > 0 else lx_first
+
                 remittances.append(
                     self.trnx_cls(
-                        trx_header_loop=self.data[0:n1_first],
-                        payer_loop=self.data[n1_first:n1_second],
-                        payee_loop=self.data[n1_second:lx_first],
+                        trx_header_loop=trx_header_loop,
+                        payer_loop=payer_loop,
+                        payee_loop=payee_loop,
                         clm_loop=self.data[idx:clm_end],
-                        trx_summary_loop=self.data[max(0, lx_last, clp_last, svc_last):],
-                        header_number_loop=self.data[lx_first:idx]
+                        trx_summary_loop=trx_summary_loop,
+                        header_number_loop=self.data[hdr_start:idx]
                     )
                 )
             return remittances
