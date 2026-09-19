@@ -83,7 +83,11 @@ from ember.hls.healthcare import HealthcareManager
 # Rows buffered before an Arrow batch is emitted. Bounds executor memory on a
 # file with very many claims; Arrow also has a 2GB per-buffer ceiling that a
 # single unbounded batch can reach on large 837s.
-BATCH_SIZE = 5000
+#
+# At roughly 4 KB per 835 claim and 8.6 KB per 837 claim (with
+# input_loop_segments), 2000 rows is ~8 MB / ~17 MB of buffer. Drop it further
+# if Python workers are still tight; the cost is more, smaller Arrow batches.
+BATCH_SIZE = 2000
 
 # Transaction types this emitter understands, mapped to whether ST/SE should be
 # stripped before ClaimBuilder sees the segments (see module docstring).
@@ -176,11 +180,19 @@ def from_edi_flat(
 
     for batch in batches:
         names = batch.schema.names
-        pks = (batch.column("pk").to_pylist() if "pk" in names
-               else [None] * batch.num_rows)
-        values = batch.column("value").to_pylist()
+        pk_col = batch.column("pk") if "pk" in names else None
+        value_col = batch.column("value")
 
-        for pk, text in zip(pks, values):
+        # Deliberately NOT to_pylist(). Under wholetext=True one row is one
+        # entire file, so converting the whole column up front materialises
+        # every file in the batch as a Python string at once -- on a batch of
+        # large 835s that alone is enough to OOM the Python worker before any
+        # parsing happens. Pull one row at a time and let each file's string be
+        # collected before the next is decoded.
+        for row in range(batch.num_rows):
+            pk = pk_col[row].as_py() if pk_col is not None else None
+            text = value_col[row].as_py()
+
             if not text or not text.strip():
                 fail(pk, "Empty EDI string")
                 continue
@@ -239,8 +251,19 @@ def from_edi_flat(
                 # One unparseable file must not take down the partition.
                 fail(pk, f"{type(exc).__name__}: {exc}")
 
-        if pk_buf:
-            yield flush()
+            finally:
+                # Release the file's string, its parsed Segment objects and the
+                # built claim objects before decoding the next row. Without
+                # this they stay reachable for the rest of the batch, so peak
+                # memory tracks the largest BATCH rather than the largest FILE.
+                text = None
+                edi = None
+
+            # Emit whatever this file produced rather than accumulating across
+            # files. Costs a few undersized Arrow batches; bounds peak memory
+            # to one file's claims plus BATCH_SIZE rows.
+            if pk_buf:
+                yield flush()
 
     if pk_buf:
         yield flush()
