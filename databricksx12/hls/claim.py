@@ -183,9 +183,33 @@ class ClaimBuilder(EDI):
     def build(self):
         if self.trnx_cls.NAME in ['837I', '837P']:
             return list(self._build_837_iter())
-            
+
         elif self.trnx_cls.NAME == '835':
-            # Optimized: Pre-build indices for all segment types needed
+            return list(self._build_835_iter())
+
+        elif self.trnx_cls.NAME == '834':
+            return self._build_834()
+
+        return []
+
+    #
+    # Lazy claim construction.
+    #
+    # build() materialises every claim in the transaction before the caller sees
+    # any of them. Streaming consumers should prefer build_iter(), which holds
+    # one claim at a time; build() is unchanged for callers that need a list.
+    #
+    def build_iter(self):
+        if self.trnx_cls.NAME in ['837I', '837P']:
+            return self._build_837_iter()
+        elif self.trnx_cls.NAME == '835':
+            return self._build_835_iter()
+        return iter(self.build())
+
+    def _build_835_iter(self):
+        """Generator over the 835 claims in this transaction."""
+        if True:
+            # Pre-build indices for all segment types needed
             clp_indices = [i for i, seg in self.segments_by_name_index("CLP")]
             n1_indices = [i for i, seg in self.segments_by_name_index("N1")]
             lx_indices = [i for i, seg in self.segments_by_name_index("LX")]
@@ -203,7 +227,6 @@ class ClaimBuilder(EDI):
             # Pre-build lookup for "next CLP after current index"
             clp_indices_set = set(clp_indices)
             
-            remittances = []
             for idx_pos, idx in enumerate(clp_indices):
                 # Find next CLP index
                 next_clp = clp_indices[idx_pos + 1] if idx_pos + 1 < len(clp_indices) else -1
@@ -217,19 +240,17 @@ class ClaimBuilder(EDI):
                 # Calculate clm_loop end
                 clm_end = min(filter(lambda x: x > 0, [next_lx, next_clp, next_se, len(self.data)]))
                 
-                remittances.append(
-                    self.trnx_cls(
-                        trx_header_loop=self.data[0:n1_first],
-                        payer_loop=self.data[n1_first:n1_second],
-                        payee_loop=self.data[n1_second:lx_first],
-                        clm_loop=self.data[idx:clm_end],
-                        trx_summary_loop=self.data[max(0, lx_last, clp_last, svc_last):],
-                        header_number_loop=self.data[lx_first:idx]
-                    )
+                yield self.trnx_cls(
+                    trx_header_loop=self.data[0:n1_first],
+                    payer_loop=self.data[n1_first:n1_second],
+                    payee_loop=self.data[n1_second:lx_first],
+                    clm_loop=self.data[idx:clm_end],
+                    trx_summary_loop=self.data[max(0, lx_last, clp_last, svc_last):],
+                    header_number_loop=self.data[lx_first:idx]
                 )
-            return remittances
-            
-        elif self.trnx_cls.NAME == '834':
+
+    def _build_834(self):
+        if True:
             # Optimized: Pre-build index of all INS positions, then slice between them
             ins_indices = [i for i, seg in self.segments_by_name_index("INS")]
             se_idx = self.index_of_segment(self.data, "SE")
