@@ -228,7 +228,21 @@ class ClaimBuilder(EDI):
             # Pre-compute common values used by all remittances
             n1_first = n1_indices[0] if n1_indices else data_len
             n1_second = n1_indices[1] if len(n1_indices) > 1 else data_len
-            lx_first = lx_indices[0] if lx_indices else data_len
+
+            # Claim body starts at whichever comes first, LX or CLP.
+            #
+            # LX (loop 2000) is OPTIONAL in the 835 implementation guide and
+            # many payers omit it entirely. Anchoring on the first LX alone
+            # falls back to data_len when there is none, which makes
+            # payee_loop = self.data[n1_second:lx_first] swallow the WHOLE
+            # transaction -- and since Remittance.to_json serialises payee_loop
+            # through _extract_segments, every claim then emits a copy of every
+            # segment in the transaction. Measured on a no-LX transaction:
+            # 3,992 bytes/claim with LX vs 289,717 bytes/claim without, at 800
+            # claims, i.e. quadratic output again by a different route.
+            first_lx = lx_indices[0] if lx_indices else data_len
+            first_clp = clp_indices[0] if clp_indices else data_len
+            lx_first = min(first_lx, first_clp)
             lx_last = lx_indices[-1] if lx_indices else 0
             clp_last = clp_indices[-1] if clp_indices else 0
             svc_last = svc_indices[-1] if svc_indices else 0

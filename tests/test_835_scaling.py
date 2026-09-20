@@ -48,17 +48,30 @@ SAMPLE_837 = "sampledata/837/CC_837I_EDI.txt"
 MAX_DOUBLING_RATIO = 2.6
 
 
-# LX (loop 2000) is OPTIONAL in the 835 guide and payers differ. Both shapes
-# MUST be tested: a fix that anchors header_number_loop to the preceding LX
-# looks correct under LX_PER_CLAIM and is still fully quadratic under
-# SINGLE_LX, because there the preceding LX is always the first LX.
-LX_PER_CLAIM = True     # one LX per claim
-SINGLE_LX = False       # one LX for the whole transaction, many CLPs beneath
+# LX (loop 2000) is OPTIONAL in the 835 guide and payers differ. ALL THREE
+# layouts must be tested -- each has caught a separate quadratic:
+#
+#   LX_PER_CLAIM  the only shape the original fixture produced. A fix that
+#                 anchors header_number_loop to the preceding LX passes here
+#                 while leaving SINGLE_LX fully quadratic.
+#   SINGLE_LX     the preceding LX is always the first LX, so anchoring the
+#                 start of header_number_loop is not enough; its end must be
+#                 bounded too.
+#   NO_LX         lx_first falls back to len(data), so payee_loop swallows the
+#                 entire transaction and every claim serialises all of it.
+#                 289,717 bytes/claim at 800 claims before the fix.
+LX_PER_CLAIM = "lx_per_claim"
+SINGLE_LX = "single_lx"
+NO_LX = "no_lx"
 
-SHAPES = [("one LX per CLP", LX_PER_CLAIM), ("one LX, many CLP", SINGLE_LX)]
+SHAPES = [
+    ("one LX per CLP", LX_PER_CLAIM),
+    ("one LX, many CLP", SINGLE_LX),
+    ("no LX at all", NO_LX),
+]
 
 
-def _synth_835(n_claims, lx_per_claim=LX_PER_CLAIM):
+def _synth_835(n_claims, shape=LX_PER_CLAIM):
     """One ST..SE transaction containing n_claims claims."""
     src = re.sub(r"[\r\n]+", "", open(SAMPLE_835).read())
     segs = [s for s in src.split("~") if s.strip()]
@@ -70,8 +83,17 @@ def _synth_835(n_claims, lx_per_claim=LX_PER_CLAIM):
     head = segs[: lx_positions[0]]
     unit = segs[lx_positions[0] : lx_positions[1]]      # LX + CLP + lines
     tail = segs[plb_or_se:]
+    claim_only = unit[1:]                               # CLP + lines, no LX
 
-    body = unit * n_claims if lx_per_claim else [unit[0]] + unit[1:] * n_claims
+    if shape == LX_PER_CLAIM:
+        body = unit * n_claims
+    elif shape == SINGLE_LX:
+        body = [unit[0]] + claim_only * n_claims
+    elif shape == NO_LX:
+        body = claim_only * n_claims
+    else:
+        raise ValueError(shape)
+
     return "~".join(head + body + tail) + "~"
 
 
@@ -80,9 +102,9 @@ def _transaction(text):
     return list(edi.functional_segments())[0].transaction_segments()[0]
 
 
-def _build(n_claims, lx_per_claim=LX_PER_CLAIM, repeats=3):
+def _build(n_claims, shape=LX_PER_CLAIM, repeats=3):
     """Returns (best_seconds, remittances) for an n_claims transaction."""
-    trnx = _transaction(_synth_835(n_claims, lx_per_claim))
+    trnx = _transaction(_synth_835(n_claims, shape))
     best, out = float("inf"), None
     for _ in range(repeats):
         start = time.perf_counter()
