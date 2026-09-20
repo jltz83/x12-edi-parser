@@ -151,6 +151,7 @@ def from_edi_flat(
     batches: Iterator[pa.RecordBatch],
     transaction_types=None,
     include_input_loops=True,
+    dedupe_transaction_level=True,
 ) -> Iterator[pa.RecordBatch]:
     """
     Parse EDI text into one flat JSON row per claim.
@@ -162,6 +163,11 @@ def from_edi_flat(
         include_input_loops: keep the input_loop_segments provenance blob.
             Set False to drop it -- it is the single largest field in the output
             and nothing downstream reads it unless you are debugging a payer.
+        dedupe_transaction_level: carry provider_adjustments and
+            trx_summary_loop only on each transaction's FIRST claim. They are
+            transaction-level, and to_json copies them onto every claim, which
+            is O(claims x PLBs). Set False for byte-identical parity with
+            parse_partition_compact at the cost of that duplication.
 
     Yields:
         Arrow batches matching get_flat_schema().
@@ -231,6 +237,27 @@ def from_edi_flat(
                             if not include_input_loops:
                                 record.pop("input_loop_segments", None)
 
+                            # Transaction-level fields, carried once.
+                            #
+                            # provider_adjustments and trx_summary_loop describe
+                            # the TRANSACTION, not the claim, and to_json copies
+                            # them onto every claim in it. That is O(claims x
+                            # PLBs), which is invisible until a payer sends a
+                            # lot of both: one production transaction with 2,854
+                            # CLPs and 1,427 PLBs produced 1,176MB of JSON from
+                            # 1.87MB of EDI, at 399,824 bytes/claim against
+                            # ~4,000 for normal files.
+                            #
+                            # Keep them on the transaction's first claim so no
+                            # data is lost -- a window over (filename,
+                            # Transaction.control_number) recovers them for the
+                            # rest -- and drop the duplicates.
+                            if dedupe_transaction_level and ordinal > 0:
+                                record["provider_adjustments"] = []
+                                loops = record.get("input_loop_segments")
+                                if isinstance(loops, dict):
+                                    loops["trx_summary_loop"] = {}
+
                             row = {
                                 "filename": pk,
                                 **edi_meta,
@@ -278,7 +305,8 @@ def from_edi_flat(
         yield flush()
 
 
-def make_flat_parser(transaction_types=None, include_input_loops=True):
+def make_flat_parser(transaction_types=None, include_input_loops=True,
+                     dedupe_transaction_level=True):
     """
     mapInArrow takes a single-argument callable, so bind options here:
 
@@ -291,6 +319,7 @@ def make_flat_parser(transaction_types=None, include_input_loops=True):
             batches,
             transaction_types=transaction_types,
             include_input_loops=include_input_loops,
+            dedupe_transaction_level=dedupe_transaction_level,
         )
     return parser
 
