@@ -226,9 +226,6 @@ class ClaimBuilder(EDI):
             data_len = len(self.data)
 
             # Pre-compute common values used by all remittances
-            n1_first = n1_indices[0] if n1_indices else data_len
-            n1_second = n1_indices[1] if len(n1_indices) > 1 else data_len
-
             # Claim body starts at whichever comes first, LX or CLP.
             #
             # LX (loop 2000) is OPTIONAL in the 835 implementation guide and
@@ -242,7 +239,27 @@ class ClaimBuilder(EDI):
             # claims, i.e. quadratic output again by a different route.
             first_lx = lx_indices[0] if lx_indices else data_len
             first_clp = clp_indices[0] if clp_indices else data_len
-            lx_first = min(first_lx, first_clp)
+            body_start = min(first_lx, first_clp)
+            lx_first = body_start
+
+            # Header / payer / payee are all bounded by the claim body.
+            #
+            # Every one of these slices has a fallback that degrades to "rest of
+            # the transaction" when an optional segment is absent, and each one
+            # is serialised per claim by Remittance.to_json:
+            #
+            #   n1_second -> data_len when a remit carries fewer than two N1
+            #   segments, so payer_loop = self.data[n1_first:n1_second] swallows
+            #   the whole transaction. Measured on a production file: 399,746
+            #   bytes/claim against ~4,000 for every other file in the same
+            #   bucket -- 1.87MB of EDI producing 1,176MB of JSON.
+            #
+            # Clamping all three to body_start closes the class rather than one
+            # instance of it: no header loop can extend past the first claim.
+            n1_first = n1_indices[0] if n1_indices else body_start
+            n1_second = n1_indices[1] if len(n1_indices) > 1 else body_start
+            n1_first = min(n1_first, body_start)
+            n1_second = min(max(n1_second, n1_first), body_start)
             lx_last = lx_indices[-1] if lx_indices else 0
             clp_last = clp_indices[-1] if clp_indices else 0
             svc_last = svc_indices[-1] if svc_indices else 0
