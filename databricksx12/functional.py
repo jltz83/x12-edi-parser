@@ -34,8 +34,15 @@ class FunctionalGroup(EDI):
     #
     # e.g. 835 -> 221 according to https://www.cgsmedicare.com/pdf/edi/835_compguide.pdf
     # 
+    _GS08_UNRESOLVED_FALLBACK = {
+        "834": "220",
+        "835": "221",
+    }
+
     def _transaction_type(self):
-        return self.segments_by_name("GS")[0].element(8)[7:10]
+        gs08_type = self.segments_by_name("GS")[0].element(8)[7:10]
+        st01 = self.segments_by_name("ST")[0].element(1)
+        return self._GS08_UNRESOLVED_FALLBACK.get(st01, gs08_type)
 
     def _sender(self):
         return self.segments_by_name("GS")[0].element(2)
