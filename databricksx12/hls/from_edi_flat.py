@@ -233,7 +233,13 @@ def from_edi_flat(
                         trnx_meta = EDIManager.class_metadata(trnx)
 
                         for ordinal, claim in enumerate(claims):
-                            record = claim.to_json()
+                            # Ask the claim not to build its input loops at all when
+                            # they will be dropped (835 / 837 classes accept the flag;
+                            # others fall back to building and popping).
+                            try:
+                                record = claim.to_json(include_input_loops=include_input_loops)
+                            except TypeError:
+                                record = claim.to_json()
                             if not include_input_loops:
                                 record.pop("input_loop_segments", None)
 
@@ -322,6 +328,29 @@ def make_flat_parser(transaction_types=None, include_input_loops=True,
             dedupe_transaction_level=dedupe_transaction_level,
         )
     return parser
+
+
+def count_segment(text, name):
+    """
+    Exact count of one segment type without building a segment array -- the raw
+    side of a parse reconciliation (CLP for 835 claims, CLM for 837 claims).
+    """
+    if not text:
+        return 0
+    if not text.startswith("ISA"):
+        i = text.find("ISA")
+        if i > 0:
+            text = text[i:]
+    elem_delim, seg_delim = text[3:4], text[105:106]
+    if not elem_delim or not seg_delim:
+        return 0
+    needle = seg_delim + name + elem_delim
+    return text.count(needle) + (1 if text.startswith(name + elem_delim) else 0)
+
+
+def count_clm(text):
+    """Exact CLM count -- one per 837 claim."""
+    return count_segment(text, "CLM")
 
 
 def count_clp(text):

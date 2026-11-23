@@ -222,6 +222,7 @@ class ClaimBuilder(EDI):
             lx_indices = [i for i, seg in self.segments_by_name_index("LX")]
             svc_indices = [i for i, seg in self.segments_by_name_index("SVC")]
             se_indices = [i for i, seg in self.segments_by_name_index("SE")]
+            plb_indices = [i for i, seg in self.segments_by_name_index("PLB")]
 
             data_len = len(self.data)
 
@@ -270,7 +271,14 @@ class ClaimBuilder(EDI):
             trx_header_loop = self.data[0:n1_first]
             payer_loop = self.data[n1_first:n1_second]
             payee_loop = self.data[n1_second:lx_first]
-            trx_summary_loop = self.data[max(0, lx_last, clp_last, svc_last):]
+            # Transaction summary (PLB provider adjustments, SE) starts at the first PLB
+            # after the last claim, else at the SE. The old anchor,
+            # max(lx_last, clp_last, svc_last), pointed INSIDE the final claim's last
+            # service line, so the summary carried that claim's tail.
+            plb_after = [p for p in plb_indices if p > clp_last]
+            se_after = [s for s in se_indices if s > clp_last]
+            summary_start = (plb_after[0] if plb_after else (se_after[0] if se_after else data_len))
+            trx_summary_loop = self.data[summary_start:] if clp_indices else self.data[max(0, lx_last, svc_last):]
 
             for idx_pos, idx in enumerate(clp_indices):
                 # Next CLP index
@@ -284,8 +292,12 @@ class ClaimBuilder(EDI):
                 se_pos = bisect.bisect_right(se_indices, idx)
                 next_se = se_indices[se_pos] if se_pos < len(se_indices) else -1
 
-                # Calculate clm_loop end
-                clm_end = min(filter(lambda x: x > 0, [next_lx, next_clp, next_se, data_len]))
+                plb_pos = bisect.bisect_right(plb_indices, idx)
+                next_plb = plb_indices[plb_pos] if plb_pos < len(plb_indices) else -1
+
+                # Calculate clm_loop end. PLB (provider-level adjustments) is a boundary
+                # too: without it the LAST claim of a transaction absorbed every PLB.
+                clm_end = min(filter(lambda x: x > 0, [next_lx, next_clp, next_se, next_plb, data_len]))
 
                 # Loop 2000 header governing THIS claim: the segments from
                 # the nearest preceding LX up to the first CLP beneath it.
@@ -419,12 +431,31 @@ class MedicalClaim(EDI):
             ref_sy = self._first([x for x in self.patient_loop if x.element(1) == "SY"], "REF")
         )
     
+    #
+    # Claim-loop segments before the first NM1 (loop 2310) or SBR (loop 2320): the
+    # claim's own REF / AMT / DTP. The previous slice fell back to len-1 when the claim
+    # had no NM1, dropping its last segment.
+    #
+    def _claim_header_segments(self):
+        stop = next((i for i, x in enumerate(self.claim_loop) if x._name in ("NM1", "SBR")), len(self.claim_loop))
+        return self.claim_loop[:stop]
+
+    #
+    # Loop 2320/2330: one segment list per SBR in the claim loop (other payers).
+    #
+    def _other_payer_groups(self):
+        idx = [i for i, x in enumerate(self.claim_loop) if x._name == "SBR"] + [len(self.claim_loop)]
+        return [self.claim_loop[a:b] for a, b in zip(idx, idx[1:])]
+
     def _populate_claim_loop(self):
+        header = self._claim_header_segments()
         return ClaimIdentity(clm = self._first(self.claim_loop, "CLM"),
-                             dtp = self.segments_by_name("DTP", data=self.claim_loop),
+                             dtp = self.segments_by_name("DTP", data=header),
                              k3 = self._first(self.claim_loop, "K3"),
-                             ref = self.segments_by_name("REF", data=self.claim_loop[:(len(self.claim_loop)-1 if (temp := [i for i, x in enumerate(self.claim_loop) if x._name == "NM1"]) == [] else temp[0]) ]), #ref up until loop 2310
-                             amt = self.segments_by_name("AMT", data=self.claim_loop)) #ref up until loop 2310
+                             ref = self.segments_by_name("REF", data=header), #ref up until loop 2310
+                             amt = self.segments_by_name("AMT", data=header),
+                             bht = self._first(self.sender_receiver_loop, "BHT"),
+                             other_payer_groups = self._other_payer_groups())
 
                              
     
@@ -439,7 +470,7 @@ class MedicalClaim(EDI):
     Overall Asks
     - Coordination of Benefits flag -- > self.benefits_assign_flag in Claim Identity
     """
-    def to_json(self):
+    def to_json(self, include_input_loops=True):
         return {
             **{'submitter': self.submitter_info.to_dict()},
             **{'receiver': self.receiver_info.to_dict()},
@@ -450,7 +481,7 @@ class MedicalClaim(EDI):
             **{'claim_header': self.claim_info.to_dict()},
             **{'claim_lines': [x.to_dict() for x in self.sl_info]}, #List
             **{'diagnosis': self.diagnosis_info.to_dict()},
-            **{'input_loop_segments': self.loop_segments_info} #the input loops
+            **({'input_loop_segments': self.loop_segments_info} if include_input_loops else {}) #the input loops
         }
 
     def _service_facility_provider(self):
@@ -479,14 +510,24 @@ class MedicalClaim(EDI):
         self.provider_info = self._populate_providers()
         self.diagnosis_info = self._populate_diagnosis()
         self.payer_info = self._populate_payer_info()
-        self.loop_segments_info =  {
-            'sender_receiver_loop': self._extract_segments(self.sender_receiver_loop),
-            'billing_loop': self._extract_segments(self.billing_loop),
-            'subscriber_loop': self._extract_segments(self.subscriber_loop),
-            'patient_loop': self._extract_segments(self.patient_loop ),
-            'claim_loop': self._extract_segments(self.claim_loop ),
-            'sl_loop': self._extract_segments(self.sl_loop)
-        }
+        self._loop_segments_info = None   # built on first access -- see loop_segments_info
+
+    #
+    # The raw input loops (provenance). Built lazily: it is the largest part of a claim's
+    # output and a flat emitter that drops it should not pay to build it per claim.
+    #
+    @property
+    def loop_segments_info(self):
+        if getattr(self, '_loop_segments_info', None) is None:
+            self._loop_segments_info = {
+                'sender_receiver_loop': self._extract_segments(self.sender_receiver_loop),
+                'billing_loop': self._extract_segments(self.billing_loop),
+                'subscriber_loop': self._extract_segments(self.subscriber_loop),
+                'patient_loop': self._extract_segments(self.patient_loop ),
+                'claim_loop': self._extract_segments(self.claim_loop ),
+                'sl_loop': self._extract_segments(self.sl_loop)
+            }
+        return self._loop_segments_info
 
 class Claim837i(MedicalClaim):
 
@@ -517,13 +558,17 @@ class Claim837i(MedicalClaim):
                 }
 
     def _populate_claim_loop(self):
+        header = self._claim_header_segments()
         return ClaimIdentity(clm = self._first(self.claim_loop, "CLM"),
-                             dtp = self.segments_by_name("DTP", data = self.claim_loop),
+                             dtp = self.segments_by_name("DTP", data = header),
                              cl1 = self._first(self.claim_loop, "CL1"),
                              k3 = self._first(self.claim_loop, "K3"),
                              hi = self._first([x for x in self.claim_loop if x._name == "HI" and x.element(1).startswith("DR")], "HI"), #DRG_CD
-                             ref = self.segments_by_name("REF", data=self.claim_loop[:(len(self.claim_loop)-1 if (temp := [i for i, x in enumerate(self.claim_loop) if x._name == "NM1"]) == [] else temp[0]) ]), #ref up until loop 2310 
-                             amt = self.segments_by_name("AMT", data=self.claim_loop),
+                             ref = self.segments_by_name("REF", data=header), #ref up until loop 2310
+                             amt = self.segments_by_name("AMT", data=header),
+                             bht = self._first(self.sender_receiver_loop, "BHT"),
+                             visit_reason_hi = [x for x in self.claim_loop if x._name == "HI" and x.element(1,0) == "APR"],
+                             other_payer_groups = self._other_payer_groups(),
                              principal_hi = self._first([x for x in self.claim_loop if x._name == "HI" and x.element(1,0) == ("BBR")], "HI"),
                              other_hi = [x for x in self.claim_loop if x._name == "HI" and x.element(1,0) == ("BBQ")],
                              condition_hi = [x for x in self.claim_loop if x._name == "HI" and x.element(1,0) == "BG"]
@@ -537,7 +582,9 @@ class Claim837i(MedicalClaim):
                     lx = self._first(s, "LX"),
                     dtp = self.segments_by_name("DTP", data = s),
                     amt = self.segments_by_name("AMT", data=s),
-                    lin = self.segments_by_name("LIN", data=s)
+                    lin = self.segments_by_name("LIN", data=s),
+                    ref = self.segments_by_name("REF", data=s),
+                    line = s
                 ),self.claim_lines()))
 
 
@@ -571,5 +618,7 @@ class Claim837p(MedicalClaim):
                     lx = self._first(s, "LX"),
                     dtp = self.segments_by_name("DTP", data=s),
                     amt = self.segments_by_name("AMT", data=s),
-                    lin = self.segments_by_name("LIN", data=s)
+                    lin = self.segments_by_name("LIN", data=s),
+                    ref = self.segments_by_name("REF", data=s),
+                    line = s
                 ), self.claim_lines()))

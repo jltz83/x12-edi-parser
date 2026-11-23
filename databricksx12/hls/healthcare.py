@@ -112,7 +112,16 @@ class HealthcareManager(EDI):
 
     @classmethod
     def build_claim(cls, seg, i, trnx_cls, data, format_cls):
-        return ClaimBuilder(trnx_cls, [x for x in data if x._name not in ['SE', 'ST']], format_cls).build_claim(seg, i-1)
+        # ClaimBuilder.build_claim needs the HL billing/subscriber/patient loops, which
+        # only the single-pass 837 iterator tracks -- calling it with (seg, i-1) raised
+        # TypeError for every 837. Walk the transaction once and return the claim whose
+        # CLM sits at position i (i-1 once ST is removed).
+        segments = [x for x in data if x._name not in ['SE', 'ST']]
+        clm_positions = [j for j, s in enumerate(segments) if s._name == 'CLM']
+        for pos, claim in zip(clm_positions, ClaimBuilder(trnx_cls, segments, format_cls).build_iter()):
+            if pos == i - 1:
+                return claim
+        raise ValueError(f"No CLM at segment {i} of this transaction")
 
     @classmethod
     def build_remittance(cls, seg, i, trnx_cls, data, format_cls):
